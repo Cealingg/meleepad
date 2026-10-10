@@ -20,14 +20,16 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          brew install cmake ninja pkg-config
+          brew install cmake ninja 
+
+      - name: Download Game ISO
+        run: |
+          curl -L -o "game.iso" "VOTRE_LIEN_DIRECT_DE_TELECHARGEMENT"
 
       - name: Build MeleePad IPA
         run: |
           echo "Starting PadMint / DolRecomp compilation..."
-          # Exécution des scripts de recompilation statique
           mkdir -p build
-          # Modifiez/ajustez cette ligne selon le nom du script de build de votre fork
           chmod +x ./build.sh || true
           ./build.sh --target ios || python3 build.py --platform ios
 
@@ -37,3 +39,4 @@ jobs:
           name: MeleePad-iOS-Personal
           path: |
             **/*.ipa
+
