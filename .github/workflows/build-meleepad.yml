@@ -1,0 +1,39 @@
+name: Build MeleePad iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          brew install cmake ninja pkg-config
+
+      - name: Build MeleePad IPA
+        run: |
+          echo "Starting PadMint / DolRecomp compilation..."
+          # Exécution des scripts de recompilation statique
+          mkdir -p build
+          # Modifiez/ajustez cette ligne selon le nom du script de build de votre fork
+          chmod +x ./build.sh || true
+          ./build.sh --target ios || python3 build.py --platform ios
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeleePad-iOS-Personal
+          path: |
+            **/*.ipa
