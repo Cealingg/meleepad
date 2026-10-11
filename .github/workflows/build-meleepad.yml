@@ -27,7 +27,7 @@ jobs:
         run: |
           # Exécute le script de préparation en lui fournissant l'ISO présente dans le dépôt
           chmod +x scripts/*.sh
-          ./scripts/prepare-game.sh game.iso
+          ./ISO/melee.iso
 
       - name: Build Core and Dynamic Library
         run: |
