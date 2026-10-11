@@ -1,104 +1,84 @@
-name: Build MeleePad IPA Sûr à 100%
+name: Build MeleePad Brut via URL Texte (Sans Compte Apple)
 
 on:
-  workflow_dispatch: # Permet de lancer le build manuellement d'un clic depuis ton iPad
+  workflow_dispatch: # Permet de lancer manuellement le build d'un clic depuis l'iPad
 
 jobs:
   build-ios:
-    runs-on: macos-14 # Version stable recommandée pour compiler les projets iOS récents
+    runs-on: macos-14
     timeout-minutes: 60
 
     steps:
       - name: 1. Récupération du code source complet
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive' # Obligatoire pour récupérer les dépendances internes du projet
+          submodules: 'recursive' # Indispensable pour télécharger les sous-modules Recomp/Slippi du projet
 
       - name: 2. Configuration des outils requis (CMake & Ninja)
         run: |
-          echo "Installation des outils nécessaires à la conversion de Melee..."
+          echo "Installation des outils nécessaires à la recompilation..."
           brew install cmake ninja ripgrep
 
       - name: 3. Configuration de la version de Xcode
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
-      - name: 4. Importation sécurisée des fichiers Apple (ESign Base64)
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      - name: 4. Téléchargement de l'ISO de Melee depuis jeu.txt
         run: |
-          # Définition des chemins temporaires sécurisés
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-          # Décodage des textes Base64 générés sur ton iPad
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
-
-          # Création et configuration d'un trousseau d'accès isolé sur le Mac de GitHub
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security default-keychain -s $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          # Importation du certificat de développement obtenu via ESign
-          security import $CERTIFICATE_PATH -k $KEYCHAIN_PATH -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          # Installation du profil de provisionnement gratuit dans le dossier Xcode
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
-
-      - name: 5. Préparation et conversion automatique du jeu (ISO Melee)
-        run: |
-          # Si tu as placé ton ISO v1.02 à la racine du projet, renomme-la en "melee.iso"
-          # Le script officiel de MeleePad va traduire le code du jeu ici
-          if [ -f "melee.iso" ]; then
-            echo "Fichier ISO détecté. Lancement de la traduction native..."
-            python3 scripts/prepare.py --input melee.iso
+          FILE_PATH=".github/jeu.txt"
+          
+          if [ -f "$FILE_PATH" ]; then
+            # Récupère l'URL brute du jeu présente dans le fichier texte
+            ISO_URL=$(cat "$FILE_PATH" | xargs)
+            echo "URL détectée : $ISO_URL"
+            
+            echo "Téléchargement de l'ISO de Melee en cours..."
+            curl -L "$ISO_URL" -o melee.iso
           else
-            echo "⚠️ Attention : Aucun fichier 'melee.iso' trouvé à la racine. Le shell d'application sera vide."
+            echo "❌ Erreur : Le fichier .github/jeu.txt est introuvable."
+            exit 1
           fi
 
-      - name: 6. Compilation et Archivage via Xcode
+          if [ -f "melee.iso" ]; then
+            echo "Fichier ISO téléchargé avec succès."
+          else
+            echo "❌ Erreur : Le téléchargement a échoué ou le fichier 'melee.iso' est introuvable."
+            exit 1
+          fi
+
+      - name: 5. Préparation et conversion native du jeu
         run: |
-          xcodebuild archive \
+          # Utilisation des scripts officiels de MeleePad pour injecter et compiler le code de l'ISO
+          ./scripts/bootstrap-dependencies.sh
+          ./scripts/prepare-game.sh ./melee.iso
+
+      - name: 6. Compilation du projet brut (Sans signature Apple)
+        run: |
+          # Ces options forcent Xcode à sauter l'étape de vérification des certificats
+          xcodebuild build \
             -project MeleePad.xcodeproj \
             -scheme MeleePad \
             -configuration Release \
-            -archivePath $RUNNER_TEMP/MeleePad.xcarchive \
-            allowProvisioningUpdates=NO
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
 
-      - name: 7. Création de la configuration d'exportation
+      - name: 7. Préparation du package d'application pour ESign
         run: |
-          cat <<EOF > $RUNNER_TEMP/ExportOptions.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>development</string>
-              <key>compileBitcode</key>
-              <false/>
-              <key>signingStyle</key>
-              <string>manual</string>
-          </dict>
-          </plist>
-          EOF
+          # Récupération automatique du dossier MeleePad.app créé par Xcode
+          BUILD_DIR=$(xcodebuild -project MeleePad.xcodeproj -scheme MeleePad -configuration Release -sdk iphoneos -showBuildSettings | grep -m 1 "BUILT_PRODUCTS_DIR" | awk '{print $3}')
+          echo "Dossier de build trouvé : $BUILD_DIR"
+          
+          mkdir -p $RUNNER_TEMP/Payload
+          cp -R "$BUILD_DIR/MeleePad.app" $RUNNER_TEMP/Payload/
+          
+          # Compression au format ZIP (prêt à être importé dans ESign)
+          cd $RUNNER_TEMP
+          zip -r MeleePad-Unsigned.zip Payload
 
-      - name: 8. Génération du fichier .IPA final signé
-        run: |
-          xcodebuild -exportArchive \
-            -archivePath $RUNNER_TEMP/MeleePad.xcarchive \
-            -exportPath $RUNNER_TEMP/exported \
-            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist
-
-      - name: 9. Mise à disposition du fichier IPA (Téléchargement iPad)
+      - name: 8. Publication du package (Téléchargement sur l'iPad)
         uses: actions/upload-artifact@v4
         with:
-          name: MeleePad-iPadOS
-          path: ${{ runner.temp }}/exported/*.ipa
-
+          name: MeleePad-iPadOS-Brut
+          path: ${{ runner.temp }}/MeleePad-Unsigned.zip
