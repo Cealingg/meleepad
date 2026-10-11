@@ -1,0 +1,61 @@
+name: Build MeleePad IPA with Game Module
+
+on:
+  workflow_dispatch: # Lancement manuel depuis GitHub
+
+jobs:
+  build:
+    name: Build Complete IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Xcode & Tools
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
+
+      - name: Install Build Dependencies
+        run: |
+          brew install cmake ninja
+
+      - name: Prepare Game Module from ISO
+        run: |
+          # Exécute le script de préparation en lui fournissant l'ISO présente dans le dépôt
+          chmod +x scripts/*.sh
+          ./scripts/prepare-game.sh game.iso
+
+      - name: Build Core and Dynamic Library
+        run: |
+          ./scripts/ios-build-core-device.sh
+
+      - name: Build Xcode Archive
+        run: |
+          xcodebuild archive \
+            -workspace MeleePad.xcworkspace \
+            -scheme MeleePad \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath build/MeleePad.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Package IPA Structure
+        run: |
+          mkdir -p build/Payload
+          cp -R "build/MeleePad.xcarchive/Products/Applications/MeleePad.app" build/Payload/
+          cd build
+          zip -r MeleePad-Complete.ipa Payload
+
+      - name: Upload Complete IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeleePad-Playable.ipa
+          path: build/MeleePad-Complete.ipa
+          retention-days: 7
